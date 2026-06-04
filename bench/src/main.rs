@@ -1,7 +1,8 @@
-use std::{thread, time::Duration};
+use std::thread;
 
-use bench::{BenchEventData, MainBenchRunner};
-use mpac_rs::{BlockingReceive, BlockingSend};
+use bench::{BenchEventData, BenchRunner, MainBenchRunner};
+use log::info;
+use mpac_rs::{BlockingReceive, BlockingSend, ChannelMaker};
 
 /// ## Bench:
 ///
@@ -29,30 +30,68 @@ use mpac_rs::{BlockingReceive, BlockingSend};
 ///     - all receivers need to cooperate for each series and maintain a collection of sequenced values
 ///     - (1-1, 7-1, 1-7, 4-4, 7-7)
 fn main() {
-    run_bench(mpac_rs::v1::channel::<usize>());
-}
+    env_logger::builder()
+        .target(env_logger::Target::Stdout)
+        .filter_level(log::LevelFilter::Debug)
+        .init();
+    info!("Starting benchmark");
+    let makers = vec![("v1_naive", Box::new(mpac_rs::v1::V1Maker))];
+    let runner = MainBenchRunner::new();
 
-fn run_bench<T, Sender: BlockingSend<T>, Receiver: BlockingReceive<T>>(
-    (tx, rx): (Sender, Receiver),
-) {
-    let main_runner = MainBenchRunner::new();
-
-    let mut handles = vec![];
-    for i in 0..100 {
-        let mut runner = main_runner.spawn_runner(format!("runner_{}", i));
-        let handle = thread::spawn(move || {
-            runner.record(BenchEventData::TestEvent { data: i * i * i });
-            thread::sleep(Duration::from_secs(3));
-            runner.record(BenchEventData::TestEvent {
-                data: i * i * i * i,
-            });
-        });
-        handles.push(handle);
+    for (desc_id, version) in makers {
+        let runner = runner.spawn_runner(format!("version_{}", desc_id));
+        run_bench_1(&runner, version.as_ref());
     }
 
+    info!("Benchmarks completed. Writing results");
+
+    runner.write_results_to_file("results/benchmark_results.json");
+}
+
+fn run_bench_1<Maker>(runner: &BenchRunner, maker: &Maker)
+where
+    Maker: ChannelMaker,
+{
+    let mut handles = vec![];
+
+    // Scope to ensure values get dropped appropriately
+    {
+        let (tx, rx) = maker.channel();
+        for i in 0..8 {
+            let mut tx_runner = runner.spawn_runner(format!("tx_runner_{}", i));
+            let tx_thread = tx.clone();
+            let s_h: thread::JoinHandle<()> = thread::spawn(move || {
+                let mut counter = 0u64;
+                let tx = tx_thread;
+                for _ in 0..10000 {
+                    if let Err(_) = tx.send(counter) {
+                        break;
+                    } else {
+                        tx_runner.record(
+                            BenchEventData::ValueSent,
+                            vec![("value".into(), counter.into())],
+                        );
+                        counter += 1;
+                    }
+                }
+            });
+
+            let mut rx_runner = runner.spawn_runner(format!("rx_runner_{}", i));
+            let rx_thread = rx.clone();
+            let r_h = thread::spawn(move || {
+                let rx = rx_thread;
+                while let Ok(r) = rx.recv() {
+                    rx_runner.record(
+                        BenchEventData::ValueReceived,
+                        vec![("value".into(), r.into())],
+                    );
+                }
+            });
+            handles.push(s_h);
+            handles.push(r_h);
+        }
+    }
     for handle in handles {
         handle.join().unwrap();
     }
-
-    main_runner.write_results_to_file("results/benchmark_results.json");
 }

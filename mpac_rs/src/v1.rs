@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use log::{debug, error};
+
 use crate::{BlockingReceive, BlockingSend, RecvError, SendError};
 
 #[derive(Debug)]
@@ -27,19 +29,23 @@ struct ChannelInner<T> {
 impl<T> BlockingReceive<T> for Receiver<T> {
     fn recv(&self) -> Result<T, RecvError> {
         loop {
-            match self.inner.lock() {
-                Ok(mut inner) => {
-                    if inner.queue.len() > 0 {
-                        return Ok(inner.queue.remove(0));
-                    } else {
-                        // only check for 0 senders if queue is empty
-                        if inner.senders < 1 {
-                            return Err(RecvError::Closed);
-                        }
+            {
+                let mut inner = match self.inner.lock() {
+                    Ok(g) => g,
+                    Err(err) => {
+                        error!("Poison Error: {:?}", err);
+                        err.into_inner()
                     }
-                }
-                Err(_) => {
-                    return Err(RecvError::Closed);
+                };
+                let queue_len = inner.queue.len();
+                if queue_len > 0 {
+                    return Ok(inner.queue.remove(0));
+                } else {
+                    // only check for 0 senders if queue is empty
+                    if inner.senders == 0 {
+                        return Err(RecvError::Closed);
+                    }
+                    // Senders are still active but no messages are in the queue.
                 }
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -49,15 +55,18 @@ impl<T> BlockingReceive<T> for Receiver<T> {
 
 impl<T> BlockingSend<T> for Sender<T> {
     fn send(&self, data: T) -> Result<(), SendError<T>> {
-        let mut v = match self.inner.lock() {
+        let mut inner = match self.inner.lock() {
             Ok(guard) => guard,
-            Err(err) => err.into_inner(),
+            Err(err) => {
+                error!("Poison Error: {:?}", err);
+                err.into_inner()
+            }
         };
 
-        if v.receivers < 1 {
+        if inner.receivers == 0 {
             return Err(SendError::Closed(data));
         } else {
-            v.queue.push(data);
+            inner.queue.push(data);
             return Ok(());
         }
     }
@@ -81,13 +90,17 @@ impl<T> Clone for Sender<T> {
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        self.inner.lock().unwrap().receivers -= 1;
+        let mut locked = self.inner.lock().unwrap();
+        debug!("Receiver count: {}", locked.receivers);
+        locked.receivers -= 1;
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        self.inner.lock().unwrap().senders -= 1;
+        let mut locked = self.inner.lock().unwrap();
+        debug!("Sender count: {}", locked.senders);
+        locked.senders -= 1;
     }
 }
 
@@ -103,6 +116,15 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
         },
         Receiver { inner },
     )
+}
+
+#[cfg(feature = "bench")]
+pub struct V1Maker;
+#[cfg(feature = "bench")]
+impl crate::ChannelMaker for V1Maker {
+    fn channel<T>(&self) -> (Sender<T>, Receiver<T>) {
+        channel()
+    }
 }
 
 #[cfg(test)]

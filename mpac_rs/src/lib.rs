@@ -22,6 +22,13 @@ where
     fn recv(&self) -> Result<T, RecvError>;
 }
 
+#[cfg(feature = "bench")]
+pub trait ChannelMaker {
+    fn channel<T>(&self) -> (Sender<T>, Receiver<T>)
+    where
+        Self: Sized;
+}
+
 #[cfg(not(feature = "bench"))]
 mod v1;
 
