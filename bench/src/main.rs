@@ -57,13 +57,13 @@ where
     // Scope to ensure values get dropped appropriately
     {
         let (tx, rx) = maker.channel();
-        for i in 0..8 {
+        for i in 0..7 {
             let mut tx_runner = runner.spawn_runner(format!("tx_runner_{}", i));
             let tx_thread = tx.clone();
             let s_h: thread::JoinHandle<()> = thread::spawn(move || {
                 let mut counter = 0u64;
                 let tx = tx_thread;
-                for _ in 0..10000 {
+                for _ in 0..100_000 {
                     if let Err(_) = tx.send(counter) {
                         break;
                     } else {
@@ -75,7 +75,9 @@ where
                     }
                 }
             });
-
+            handles.push(s_h);
+        }
+        for i in 0..1 {
             let mut rx_runner = runner.spawn_runner(format!("rx_runner_{}", i));
             let rx_thread = rx.clone();
             let r_h = thread::spawn(move || {
@@ -87,7 +89,6 @@ where
                     );
                 }
             });
-            handles.push(s_h);
             handles.push(r_h);
         }
     }
