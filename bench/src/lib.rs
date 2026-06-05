@@ -41,6 +41,7 @@ impl MainBenchRunner {
                 }],
                 runner_id: id,
             },
+            start: Instant::now(),
         }
     }
 
@@ -57,7 +58,7 @@ impl MainBenchRunner {
                             .log
                             .iter()
                             .map(|l| FinalBenchEvent {
-                                elapsed_s: l.instant.duration_since(locked.start).as_secs_f32(),
+                                elapsed_s: l.instant.duration_since(locked.start).as_secs_f64(),
                                 event: l.event.clone(),
                                 additional: l.additional.iter().map(Clone::clone).collect(),
                             })
@@ -84,6 +85,7 @@ struct MainBenchRunnerInner {
 
 #[derive(Debug)]
 pub struct BenchRunner {
+    start: Instant,
     main: Arc<Mutex<MainBenchRunnerInner>>,
     log: BenchEventLog,
 }
@@ -101,6 +103,7 @@ impl BenchRunner {
                 }],
                 runner_id: id,
             },
+            start: Instant::now(),
         }
     }
     pub fn record(&mut self, event: BenchEventData, additional: Vec<(String, Value)>) {
@@ -117,13 +120,39 @@ impl BenchRunner {
 impl Drop for BenchRunner {
     fn drop(&mut self) {
         self.record(BenchEventData::RunnerClosed, vec![]);
-        self.main.lock().unwrap().results.push(std::mem::replace(
-            &mut self.log,
-            BenchEventLog {
-                runner_id: String::new(),
-                log: vec![],
+        let mut dst = Path::new("results").to_path_buf();
+        let splits = self.log.runner_id.split("::");
+        let mut last = "";
+        for split in splits {
+            dst = dst.join(split);
+            last = split;
+        }
+        let last = last.to_owned() + ".json";
+        create_dir_all(&dst).unwrap();
+        let file = File::create(&dst.join(last)).unwrap();
+        serde_json::to_writer(
+            file,
+            &FinalBenchEventLog {
+                log: self
+                    .log
+                    .log
+                    .iter()
+                    .map(|e| FinalBenchEvent {
+                        elapsed_s: e.instant.duration_since(self.start).as_secs_f64(),
+                        event: e.event.clone(),
+                        additional: e.additional.iter().map(|e| e.clone()).collect(),
+                    })
+                    .collect(),
             },
-        ));
+        )
+        .unwrap();
+        // self.main.lock().unwrap().results.push(std::mem::replace(
+        //     &mut self.log,
+        //     BenchEventLog {
+        //         runner_id: String::new(),
+        //         log: vec![],
+        //     },
+        // ));
     }
 }
 
@@ -155,7 +184,7 @@ pub struct FinalBenchEventLog {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FinalBenchEvent {
-    elapsed_s: f32,
+    elapsed_s: f64,
     event: BenchEventData,
     additional: HashMap<String, Value>,
 }

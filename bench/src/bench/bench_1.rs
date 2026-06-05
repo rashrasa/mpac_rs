@@ -35,7 +35,7 @@ where
                     } else {
                         break;
                     }
-                    if start.elapsed().as_secs_f32() > 30.0 {
+                    if start.elapsed().as_secs_f32() > 10.0 {
                         break;
                     }
                 }

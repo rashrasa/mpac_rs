@@ -69,7 +69,7 @@ fn main() {
         }
     }
 
-    info!("Benchmarks completed. Writing results");
+    info!("Benchmarks completed");
 
-    runner.write_results_to_file("results/benchmark_results.json");
+    //runner.write_results_to_file("results/benchmark_results.json");
 }
