@@ -1,4 +1,5 @@
 // TODO: potentially instantiate logs with an extremely high capacity
+pub mod bench;
 
 use std::{
     collections::HashMap,

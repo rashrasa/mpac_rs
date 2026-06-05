@@ -91,7 +91,7 @@ impl<T> Clone for Sender<T> {
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         let mut locked = self.inner.lock().unwrap();
-        debug!("Receiver count: {}", locked.receivers);
+        debug!("Receiver count: {}", locked.receivers - 1);
         locked.receivers -= 1;
     }
 }
@@ -99,7 +99,7 @@ impl<T> Drop for Receiver<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let mut locked = self.inner.lock().unwrap();
-        debug!("Sender count: {}", locked.senders);
+        debug!("Sender count: {}", locked.senders - 1);
         locked.senders -= 1;
     }
 }
