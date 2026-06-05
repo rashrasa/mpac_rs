@@ -71,7 +71,7 @@ impl MainBenchRunner {
 
         let mut file = File::create(path).unwrap();
 
-        file.write_all(&serde_json::to_vec(&transformed).unwrap())
+        file.write_all(&serde_json::to_vec_pretty(&transformed).unwrap())
             .unwrap();
     }
 }

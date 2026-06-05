@@ -1,4 +1,7 @@
-use bench::{MainBenchRunner, bench::bench_1::run_bench_1};
+use bench::{
+    MainBenchRunner,
+    bench::bench_1::{Bench1Config, run_bench_1},
+};
 use log::info;
 
 /// ## Bench:
@@ -32,12 +35,38 @@ fn main() {
         .filter_level(log::LevelFilter::Debug)
         .init();
     info!("Starting benchmark");
-    let makers = vec![("v1_naive", Box::new(mpac_rs::v1::V1Maker))];
+    let makers = vec![(
+        "v1_naive",
+        Box::new(mpac_rs::v1::V1Maker),
+        vec![
+            (
+                "1_tx-7_rx",
+                Bench1Config {
+                    n_senders: 7,
+                    n_receivers: 1,
+                },
+            ),
+            (
+                "7_tx-1_rx",
+                Bench1Config {
+                    n_senders: 1,
+                    n_receivers: 7,
+                },
+            ),
+        ],
+    )];
     let runner = MainBenchRunner::new();
 
-    for (desc_id, version) in makers {
-        let runner = runner.spawn_runner(format!("version_{}", desc_id));
-        run_bench_1(&runner, version.as_ref());
+    for (version_desc, version, configs) in makers {
+        let runner = runner.spawn_runner(format!("version_{}", version_desc));
+        for (config_desc, config) in configs {
+            info!(
+                "Starting {} tests with profile {}",
+                version_desc, config_desc
+            );
+            let runner = runner.spawn_runner(format!("config_{}", config_desc));
+            run_bench_1(&runner, version.as_ref(), config);
+        }
     }
 
     info!("Benchmarks completed. Writing results");

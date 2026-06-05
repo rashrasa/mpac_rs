@@ -9,7 +9,7 @@ pub struct Bench1Config {
     pub n_receivers: usize,
 }
 
-pub fn run_bench_1<Maker>(runner: &BenchRunner, maker: &Maker)
+pub fn run_bench_1<Maker>(runner: &BenchRunner, maker: &Maker, config: Bench1Config)
 where
     Maker: ChannelMaker,
 {
@@ -18,7 +18,7 @@ where
     // Scope to ensure values get dropped appropriately
     {
         let (tx, rx) = maker.channel();
-        for i in 0..7 {
+        for i in 0..config.n_senders {
             let mut tx_runner = runner.spawn_runner(format!("tx_runner_{}", i));
             let tx_thread = tx.clone();
             let s_h: thread::JoinHandle<()> = thread::spawn(move || {
@@ -43,7 +43,7 @@ where
             handles.push(s_h);
         }
 
-        for i in 0..1 {
+        for i in 0..config.n_receivers {
             let mut rx_runner = runner.spawn_runner(format!("rx_runner_{}", i));
             let rx_thread = rx.clone();
             let r_h = thread::spawn(move || {
