@@ -29,12 +29,11 @@ Implemented as a `Vec`, with sender/receiver count management through `Drop` and
 - Files: `1`
 - Avg. \# of Events (with Senders alive for 5 seconds): `~2,487,926` (runs had [`2,516,786`, `2,570,552`, `2,501,010`, `2,521,348`, `2,329,936`])
 - \# of Events (with 100k events per Sender): `1,600,036`
-- Benchmark overhead (search `BenchRunner`) is `~3.0%` of flamegraph cpu samples
-- Benchmark event recording overhead (search `BenchRunner::record`) is `~0.2% or ~170ms` of flamegraph cpu samples
+- Benchmark overhead (search `BenchRunner`) is `~3.0% or 2500ms` of flamegraph cpu samples
+- Benchmark event recording overhead (search `BenchRunner::record`) is `~0.2% or ~170ms` of CPU samples
+- Benchmark subject had `~96% or 81000ms` of CPU time (search ``bench.exe`mpac_rs::v1``)
 
 ##### Flamegraph
-
-Mostly operations from `mpac_rs`, overhead from benchmark around 
 
 ![](bench/docs/assets/flamegraph_pre_opt.svg)
 
@@ -46,10 +45,9 @@ Mostly operations from `mpac_rs`, overhead from benchmark around
 - Files: `20`
 - Avg. \# of Events (with Senders alive for 5 seconds): `~2,023,108` (runs had [`2,002,930`, `2,011,140`, `2,022,838`, `2,033,416`, `2,045,218`])
 - \# of Events (with 100k events per Sender): `1,600,036`
-- Benchmark overhead (search `BenchRunner`) is `~4.0%` of flamegraph cpu samples
-- Benchmark event recording overhead (search `BenchRunner::record`) is `~0.7% or 209ms` of flamegraph cpu samples
-
-- **Noteworthy**: `Instant::now` sample % went from `~0.1%` to now `~0.5%`, which could explain the reduction in # of events and rise in overhead.
+- Benchmark overhead (search `BenchRunner`) is `~4.0% or 1200ms` of flamegraph CPU samples
+- Benchmark event recording overhead (search `BenchRunner::record`) is `~0.7% or 209ms` of flamegraph CPU samples
+- Benchmark subject had `~94% or 28000ms` of CPU time (search ``bench.exe`mpac_rs::v1``)
 
 ##### Flamegraph
 
@@ -80,5 +78,7 @@ Mostly operations from `mpac_rs`, overhead from benchmark around
 
 #### Additional Overhead
 
-Instead of storing `Instant`s in events, now storing elapsed seconds from the runner's start time as `f64`. This results in an Instant::now call for each event, which explains the rise in `BenchRunner::record`'s proportion of CPU time increasing. This was originally done to reduce the amount of cloning done when a runner exits and writes to value, but is now being reconsidered.
+`Instant::now` CPU sample % went from `~0.1%` to now `~0.5%`, which could explain the reduction in # of events and rise in overhead.
+
+Instead of storing `Instant`s in events, now storing elapsed seconds from the runner's start time as `f64`. This results in an `Instant::now` call for each event, which explains the rise in `BenchRunner::record`'s proportion of CPU time increasing. This was originally done to reduce the amount of cloning done when a runner exits and writes to value (mapping needed from `Instant` to duration in seconds), but is now being reconsidered.
 
