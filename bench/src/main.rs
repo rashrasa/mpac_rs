@@ -1,6 +1,8 @@
+use std::time::Instant;
+
 use bench::{
     MainBenchRunner,
-    bench::bench_1::{Bench1Config, run_bench_1},
+    bench::bench_1::{self, run_bench_1},
 };
 use log::info;
 
@@ -35,24 +37,41 @@ fn main() {
         .filter_level(log::LevelFilter::Debug)
         .init();
     info!("Starting benchmark");
+    let start = Instant::now();
     let makers = vec![(
         "v1_naive",
         Box::new(mpac_rs::v1::V1Maker),
         vec![
             (
-                "1_tx-7_rx",
-                Bench1Config {
+                "1_tx-7_rx_ttl_5",
+                bench_1::Config {
                     n_senders: 7,
                     n_receivers: 1,
-                    sender_ttl_s: 5.0,
+                    sender_config: bench_1::SenderConfig::TimeToLiveSeconds(5.0),
                 },
             ),
             (
-                "7_tx-1_rx",
-                Bench1Config {
+                "7_tx-1_rx_ttl_5",
+                bench_1::Config {
                     n_senders: 1,
                     n_receivers: 7,
-                    sender_ttl_s: 5.0,
+                    sender_config: bench_1::SenderConfig::TimeToLiveSeconds(5.0),
+                },
+            ),
+            (
+                "1_tx-7_rx_nor_100k",
+                bench_1::Config {
+                    n_senders: 7,
+                    n_receivers: 1,
+                    sender_config: bench_1::SenderConfig::NumberOfRequests(100_000),
+                },
+            ),
+            (
+                "7_tx-1_rx_nor_100k",
+                bench_1::Config {
+                    n_senders: 1,
+                    n_receivers: 7,
+                    sender_config: bench_1::SenderConfig::NumberOfRequests(100_000),
                 },
             ),
         ],
@@ -71,5 +90,8 @@ fn main() {
         }
     }
 
-    info!("Benchmarks completed");
+    info!(
+        "Benchmarks completed. Ran for {}",
+        start.elapsed().as_secs_f64()
+    );
 }
