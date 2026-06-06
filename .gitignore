@@ -1,5 +1,5 @@
 /target
 **/results
-flamegraph.svg
+/flamegraph.svg
 perf.data
 perf.data.old

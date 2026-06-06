@@ -44,6 +44,7 @@ fn main() {
                 Bench1Config {
                     n_senders: 7,
                     n_receivers: 1,
+                    sender_ttl_s: 5.0,
                 },
             ),
             (
@@ -51,6 +52,7 @@ fn main() {
                 Bench1Config {
                     n_senders: 1,
                     n_receivers: 7,
+                    sender_ttl_s: 5.0,
                 },
             ),
         ],
@@ -70,6 +72,4 @@ fn main() {
     }
 
     info!("Benchmarks completed");
-
-    //runner.write_results_to_file("results/benchmark_results.json");
 }

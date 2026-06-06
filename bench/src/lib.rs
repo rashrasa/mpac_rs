@@ -6,87 +6,43 @@ use std::{
     fs::{File, create_dir_all},
     io::Write,
     path::Path,
-    sync::{Arc, Mutex},
     time::Instant,
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 #[derive(Debug)]
 pub struct MainBenchRunner {
-    // this shouldnt slow down any benchmarks since this is only accessed when a
-    // test runner completes.
-    inner: Arc<Mutex<MainBenchRunnerInner>>,
+    inner: BenchRunner,
 }
 
 impl MainBenchRunner {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(MainBenchRunnerInner {
+            inner: BenchRunner {
                 start: Instant::now(),
-                results: vec![],
-            })),
+                log: BenchEventLog {
+                    runner_id: String::from("main_runner"),
+                    log: vec![BenchEvent {
+                        event: BenchEventData::RunnerStarted,
+                        runner_elapsed_secs: 0.0,
+                        additional: HashMap::new(),
+                    }],
+                },
+            },
         }
     }
 
     pub fn spawn_runner(&self, id: String) -> BenchRunner {
-        BenchRunner {
-            main: self.inner.clone(),
-            log: BenchEventLog {
-                log: vec![BenchEvent {
-                    instant: Instant::now(),
-                    event: BenchEventData::RunnerStarted,
-                    additional: vec![],
-                }],
-                runner_id: id,
-            },
-            start: Instant::now(),
-        }
+        self.inner.spawn_runner(id)
     }
-
-    pub fn write_results_to_file(&self, path: &str) {
-        let locked = self.inner.lock().unwrap();
-        let transformed: HashMap<String, FinalBenchEventLog> = locked
-            .results
-            .iter()
-            .map(|r| {
-                (
-                    r.runner_id.clone(),
-                    FinalBenchEventLog {
-                        log: r
-                            .log
-                            .iter()
-                            .map(|l| FinalBenchEvent {
-                                elapsed_s: l.instant.duration_since(locked.start).as_secs_f64(),
-                                event: l.event.clone(),
-                                additional: l.additional.iter().map(Clone::clone).collect(),
-                            })
-                            .collect(),
-                    },
-                )
-            })
-            .collect();
-
-        create_dir_all(Path::new(path).parent().unwrap()).unwrap();
-
-        let mut file = File::create(path).unwrap();
-
-        file.write_all(&serde_json::to_vec_pretty(&transformed).unwrap())
-            .unwrap();
-    }
-}
-
-#[derive(Debug)]
-struct MainBenchRunnerInner {
-    start: Instant,
-    results: Vec<BenchEventLog>,
 }
 
 #[derive(Debug)]
 pub struct BenchRunner {
     start: Instant,
-    main: Arc<Mutex<MainBenchRunnerInner>>,
     log: BenchEventLog,
 }
 
@@ -94,22 +50,21 @@ impl BenchRunner {
     pub fn spawn_runner(&self, id: String) -> Self {
         let id = format!("{}::{}", self.log.runner_id, id);
         Self {
-            main: self.main.clone(),
             log: BenchEventLog {
                 log: vec![BenchEvent {
-                    instant: Instant::now(),
+                    runner_elapsed_secs: 0.0,
                     event: BenchEventData::RunnerStarted,
-                    additional: vec![],
+                    additional: HashMap::new(),
                 }],
                 runner_id: id,
             },
             start: Instant::now(),
         }
     }
-    pub fn record(&mut self, event: BenchEventData, additional: Vec<(String, Value)>) {
+    pub fn record(&mut self, event: BenchEventData, additional: HashMap<String, Value>) {
         self.log.log.push({
             BenchEvent {
-                instant: Instant::now(),
+                runner_elapsed_secs: self.start.elapsed().as_secs_f64(),
                 event,
                 additional,
             }
@@ -119,7 +74,7 @@ impl BenchRunner {
 
 impl Drop for BenchRunner {
     fn drop(&mut self) {
-        self.record(BenchEventData::RunnerClosed, vec![]);
+        self.record(BenchEventData::RunnerClosed, HashMap::new());
         let mut dst = Path::new("results").to_path_buf();
         let splits = self.log.runner_id.split("::");
         let mut last = "";
@@ -128,31 +83,13 @@ impl Drop for BenchRunner {
             last = split;
         }
         let last = last.to_owned() + ".json";
-        create_dir_all(&dst).unwrap();
-        let file = File::create(&dst.join(last)).unwrap();
-        serde_json::to_writer(
-            file,
-            &FinalBenchEventLog {
-                log: self
-                    .log
-                    .log
-                    .iter()
-                    .map(|e| FinalBenchEvent {
-                        elapsed_s: e.instant.duration_since(self.start).as_secs_f64(),
-                        event: e.event.clone(),
-                        additional: e.additional.iter().map(|e| e.clone()).collect(),
-                    })
-                    .collect(),
-            },
-        )
-        .unwrap();
-        // self.main.lock().unwrap().results.push(std::mem::replace(
-        //     &mut self.log,
-        //     BenchEventLog {
-        //         runner_id: String::new(),
-        //         log: vec![],
-        //     },
-        // ));
+        if let Ok(_) = create_dir_all(&dst) {
+            if let Ok(mut file) = File::create(&dst.join(last)) {
+                if let Ok(bytes) = serde_json::to_vec(&self.log.log) {
+                    let _ = file.write_all(&bytes);
+                }
+            }
+        }
     }
 }
 
@@ -162,29 +99,23 @@ pub struct BenchEventLog {
     log: Vec<BenchEvent>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BenchEvent {
-    instant: Instant,
+    #[serde(rename = "_t")]
+    runner_elapsed_secs: f64,
+
+    #[serde(rename = "_e")]
     event: BenchEventData,
-    additional: Vec<(String, Value)>,
+
+    #[serde(flatten)]
+    additional: HashMap<String, Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
 pub enum BenchEventData {
     RunnerStarted,
     RunnerClosed,
     ValueSent,
     ValueReceived,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct FinalBenchEventLog {
-    log: Vec<FinalBenchEvent>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FinalBenchEvent {
-    elapsed_s: f64,
-    event: BenchEventData,
-    additional: HashMap<String, Value>,
 }

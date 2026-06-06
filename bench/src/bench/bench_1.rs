@@ -1,4 +1,4 @@
-use std::{thread, time::Instant};
+use std::{collections::HashMap, thread, time::Instant};
 
 use mpac_rs::{BlockingReceive, BlockingSend, ChannelMaker};
 
@@ -7,6 +7,7 @@ use crate::{BenchEventData, BenchRunner};
 pub struct Bench1Config {
     pub n_senders: usize,
     pub n_receivers: usize,
+    pub sender_ttl_s: f64,
 }
 
 pub fn run_bench_1<Maker>(runner: &BenchRunner, maker: &Maker, config: Bench1Config)
@@ -29,13 +30,13 @@ where
                     if let Ok(_) = tx.send(counter) {
                         tx_runner.record(
                             BenchEventData::ValueSent,
-                            vec![("value".into(), counter.into())],
+                            HashMap::from([("value".into(), counter.into())]),
                         );
                         counter += 1;
                     } else {
                         break;
                     }
-                    if start.elapsed().as_secs_f32() > 10.0 {
+                    if start.elapsed().as_secs_f64() > config.sender_ttl_s {
                         break;
                     }
                 }
@@ -51,7 +52,7 @@ where
                 while let Ok(r) = rx.recv() {
                     rx_runner.record(
                         BenchEventData::ValueReceived,
-                        vec![("value".into(), r.into())],
+                        HashMap::from([("value".into(), r.into())]),
                     );
                 }
             });
