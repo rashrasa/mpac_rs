@@ -1,86 +1,219 @@
-use std::{collections::HashMap, thread, time::Instant};
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    thread,
+};
 
+use anyhow::Context;
+use fast_time::{Clock, Instant};
+use log::{debug, error};
 use mpac_rs::{BlockingReceive, BlockingSend, ChannelMaker};
 
-use crate::runner::{BenchEventData, BenchRunner};
+use crate::runner::BenchRunner;
 
 #[derive(Clone)]
-pub struct Config {
+pub struct Config<T> {
     pub n_senders: usize,
     pub n_receivers: usize,
-    pub sender_config: SenderConfig,
+    pub sender_ttl_s: Option<f64>,
+    pub receiver_ttl_s: Option<f64>,
+    pub make_payload: fn() -> T,
 }
 
-#[derive(Clone)]
-pub enum SenderConfig {
-    TimeToLiveSeconds(f64),
-    NumberOfRequests(u64),
+struct Message<T> {
+    id: u64,
+    _payload: T,
 }
 
-pub fn run_bench_1<Maker>(runner: &BenchRunner, maker: &Maker, config: Config)
+pub fn run_bench_1<T, Maker>(
+    runner: &BenchRunner,
+    maker: &Maker,
+    config: Config<T>,
+) -> anyhow::Result<()>
 where
+    T: Clone + Send + Sync + 'static,
     Maker: ChannelMaker,
 {
     let mut handles = vec![];
 
+    if config.receiver_ttl_s.is_none() && config.sender_ttl_s.is_none() {
+        return Err(anyhow::Error::msg(
+            "Time-To-Live must be set for either senders, receivers, or both.",
+        ));
+    }
+
+    let start_flag: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
+
     // Scope to ensure values get dropped appropriately
     {
         let (tx, rx) = maker.channel();
-        for i in 0..config.n_senders {
-            let mut tx_runner = runner.spawn_runner(format!("tx_runner_{}", i));
-            let tx_thread = tx.clone();
-            let config_thread = config.clone();
-            let s_h: thread::JoinHandle<()> = thread::spawn(move || {
-                let config = config_thread;
-                let start = Instant::now();
-                let mut n_sent = 0u64;
 
-                let mut counter = 0u64;
-                let tx = tx_thread;
-                loop {
-                    if let Ok(_) = tx.send(counter) {
-                        tx_runner.record(
-                            BenchEventData::ValueSent,
-                            HashMap::from([("value".into(), counter.into())]),
-                        );
-                        counter += 1;
-                        n_sent += 1;
-                    } else {
-                        break;
-                    }
-                    match config.sender_config {
-                        SenderConfig::TimeToLiveSeconds(ttl_s) => {
-                            if start.elapsed().as_secs_f64() > ttl_s {
-                                break;
-                            }
-                        }
-                        SenderConfig::NumberOfRequests(n) => {
-                            if n_sent >= n {
-                                break;
-                            }
-                        }
-                    }
-                }
+        for i in 0..config.n_senders {
+            let runner = runner.spawn_runner(format!("tx_runner_{}", i));
+            let tx = tx.clone();
+            let config = config.clone();
+            let start_flag = Arc::clone(&start_flag);
+            let s_h: thread::JoinHandle<()> = thread::spawn(move || {
+                sender_thread(start_flag, config.clone(), tx, runner, config.make_payload);
             });
             handles.push(s_h);
         }
 
         for i in 0..config.n_receivers {
-            let mut rx_runner = runner.spawn_runner(format!("rx_runner_{}", i));
-            let rx_thread = rx.clone();
+            let rx = rx.clone();
+            let runner = runner.spawn_runner(format!("rx_runner_{}", i));
+            let config = config.clone();
+            let start_flag = Arc::clone(&start_flag);
             let r_h = thread::spawn(move || {
-                let rx = rx_thread;
-                while let Ok(r) = rx.recv() {
-                    rx_runner.record(
-                        BenchEventData::ValueReceived,
-                        HashMap::from([("value".into(), r.into())]),
-                    );
-                }
+                receiver_thread(start_flag, config.clone(), rx, runner);
             });
             handles.push(r_h);
         }
     }
+
+    {
+        let (lock, cvar) = &*start_flag;
+        let mut started = lock.lock().unwrap();
+        debug!("Notifying all threads to start");
+        *started = true;
+        cvar.notify_all();
+    }
+
     for handle in handles {
         handle.join().unwrap();
     }
+    Ok(())
+}
+
+fn sender_thread<T>(
+    start_flag: Arc<(Mutex<bool>, Condvar)>,
+    config: Config<T>,
+    mut tx: impl BlockingSend<Message<T>>,
+    mut runner: BenchRunner,
+    make_payload: fn() -> T,
+) {
+    let mut clock = runner.clock();
+
+    {
+        let (lock, cvar) = &*start_flag;
+        let mut started = lock.lock().unwrap();
+        while !*started {
+            started = cvar.wait(started).unwrap();
+        }
+    }
+
+    debug!("(Sender) Received start signal");
+
+    let start = clock.now();
+    runner.override_start(start);
+    loop {
+        if let Err(_) = sender_work(&mut tx, &mut runner, make_payload) {
+            break;
+        }
+        if !keep_sender_alive(&config.sender_ttl_s, &start, &mut clock) {
+            break;
+        }
+    }
+
+    // Do not remove, otherwise channel has to wait extra to close.
+    drop(tx);
+
+    if let Err(err) = runner
+        .complete_runner()
+        .context("failed to complete runner")
+    {
+        error!("{err}");
+    }
+}
+
+fn sender_work<T>(
+    tx: &mut impl BlockingSend<Message<T>>,
+    runner: &mut BenchRunner,
+    make_playload: fn() -> T,
+) -> anyhow::Result<()> {
+    let id = runner.next_id();
+    let message = Message {
+        id: id,
+        _payload: make_playload(),
+    };
+
+    let event = runner.start_event();
+    if let Err(_) = tx.send(message) {
+        return Err(anyhow::Error::msg("channel closed"));
+    };
+    event.finish(id);
+    Ok(())
+}
+
+fn keep_sender_alive(ttl: &Option<f64>, start: &Instant, clock: &mut Clock) -> bool {
+    if let Some(ttl) = ttl {
+        if start.elapsed(clock).as_secs_f64() > *ttl {
+            return false;
+        }
+        return true;
+    }
+    true
+}
+
+fn receiver_thread<T>(
+    start_flag: Arc<(Mutex<bool>, Condvar)>,
+    config: Config<T>,
+    mut rx: impl BlockingReceive<Message<T>>,
+    mut runner: BenchRunner,
+) {
+    let mut clock = runner.clock();
+
+    {
+        let (lock, cvar) = &*start_flag;
+        let mut started = lock.lock().unwrap();
+        while !*started {
+            started = cvar.wait(started).unwrap();
+        }
+    }
+
+    debug!("(Receiver) Received start signal");
+
+    let start = clock.now();
+    runner.override_start(start);
+    loop {
+        if let Err(_) = receiver_work(&mut rx, &mut runner) {
+            break;
+        }
+        if !keep_receiver_alive(&config.receiver_ttl_s, &start, &mut clock) {
+            break;
+        }
+    }
+
+    // Do not remove, otherwise channel has to wait extra to close.
+    drop(rx);
+
+    if let Err(err) = runner
+        .complete_runner()
+        .context("failed to complete runner")
+    {
+        error!("{err}");
+    }
+}
+
+fn receiver_work<T>(
+    rx: &mut impl BlockingReceive<Message<T>>,
+    runner: &mut BenchRunner,
+) -> anyhow::Result<()> {
+    let event_guard = runner.start_event();
+    match rx.recv() {
+        Ok(r) => {
+            event_guard.finish(r.id);
+            Ok(())
+        }
+        Err(_) => Err(anyhow::Error::msg("channel closed")),
+    }
+}
+
+fn keep_receiver_alive(ttl: &Option<f64>, start: &Instant, clock: &mut Clock) -> bool {
+    if let Some(ttl) = ttl {
+        if start.elapsed(clock).as_secs_f64() > *ttl {
+            return false;
+        }
+        return true;
+    }
+    true
 }

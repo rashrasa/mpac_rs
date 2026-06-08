@@ -1,14 +1,18 @@
 use std::{
-    collections::HashMap,
     fs::{File, create_dir_all},
-    io::Write,
+    io::{BufWriter, Write},
     path::Path,
-    time::Instant,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use serde_repr::{Deserialize_repr, Serialize_repr};
+use crate::completion::CompletionGuard;
+use anyhow::Context;
+use fast_time::{Clock, Instant};
+
+use crate::RUNNER_WRITER_BUFFER_SIZE;
 
 #[derive(Debug)]
 pub struct MainBenchRunner {
@@ -17,17 +21,20 @@ pub struct MainBenchRunner {
 
 impl MainBenchRunner {
     pub fn new() -> Self {
+        let mut clock = Clock::new();
+
+        let start = clock.now();
         Self {
             inner: BenchRunner {
-                start: Instant::now(),
-                log: BenchEventLog {
-                    runner_id: String::from("main_runner"),
-                    log: vec![BenchEvent {
-                        event: BenchEventData::RunnerStarted,
-                        runner_elapsed_secs: 0.0,
-                        additional: HashMap::new(),
-                    }],
-                },
+                global_start: Arc::new(start),
+                id_bank: Arc::new(AtomicU64::new(0)),
+                clock: clock,
+
+                id: String::from("main_runner"),
+                runner_start: start,
+                log: vec![],
+
+                completed: CompletionGuard::new("main_runner".into()),
             },
         }
     }
@@ -35,84 +42,180 @@ impl MainBenchRunner {
     pub fn spawn_runner(&self, id: String) -> BenchRunner {
         self.inner.spawn_runner(id)
     }
+
+    pub fn complete_runner(self) -> anyhow::Result<()> {
+        self.inner
+            .complete_runner()
+            .context("failed to complete main runner")
+    }
 }
 
 #[derive(Debug)]
 pub struct BenchRunner {
-    start: Instant,
-    log: BenchEventLog,
+    id_bank: Arc<AtomicU64>,
+    global_start: Arc<Instant>,
+    clock: Clock,
+
+    id: String,
+    runner_start: Instant,
+    log: Vec<BenchEvent>,
+
+    completed: CompletionGuard,
 }
 
 impl BenchRunner {
     pub fn spawn_runner(&self, id: String) -> Self {
-        let id = format!("{}::{}", self.log.runner_id, id);
+        let id = format!("{}::{}", self.id, id);
+        let mut clock = self.clock.clone();
+        let start = clock.now();
         Self {
-            log: BenchEventLog {
-                log: vec![BenchEvent {
-                    runner_elapsed_secs: 0.0,
-                    event: BenchEventData::RunnerStarted,
-                    additional: HashMap::new(),
-                }],
-                runner_id: id,
-            },
-            start: Instant::now(),
+            global_start: Arc::new(clock.now()),
+            id_bank: self.id_bank.clone(),
+            clock: clock,
+
+            id: id.clone(),
+            runner_start: start,
+            log: vec![],
+
+            completed: CompletionGuard::new(id),
         }
     }
-    pub fn record(&mut self, event: BenchEventData, additional: HashMap<String, Value>) {
-        self.log.log.push({
-            BenchEvent {
-                runner_elapsed_secs: self.start.elapsed().as_secs_f64(),
-                event,
-                additional,
-            }
-        })
-    }
-}
 
-impl Drop for BenchRunner {
-    fn drop(&mut self) {
-        self.record(BenchEventData::RunnerClosed, HashMap::new());
+    pub fn next_id(&self) -> u64 {
+        self.id_bank.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn clock(&self) -> Clock {
+        self.clock.clone()
+    }
+
+    pub fn override_start(&mut self, start: Instant) {
+        self.runner_start = start;
+    }
+
+    pub fn start_event<'a>(&'a mut self) -> EventGuard<'a> {
+        EventGuard {
+            start: self.clock.now(),
+            runner: self,
+        }
+    }
+
+    pub fn complete_runner(mut self) -> anyhow::Result<()> {
+        let end = self.clock.now();
+
         let mut dst = Path::new("results").to_path_buf();
-        let splits = self.log.runner_id.split("::");
+        let splits = self.id.split("::");
         let mut last = "";
         for split in splits {
             dst = dst.join(split);
             last = split;
         }
-        let last = last.to_owned() + ".json";
-        if let Ok(_) = create_dir_all(&dst) {
-            if let Ok(mut file) = File::create(&dst.join(last)) {
-                if let Ok(bytes) = serde_json::to_vec(&self.log.log) {
-                    let _ = file.write_all(&bytes);
-                }
-            }
-        }
+        let last = last.to_owned() + ".bin";
+
+        create_dir_all(&dst)?;
+        let mut file = File::create(&dst.join(last))?;
+
+        write_all_bench_log(
+            self.log,
+            *self.global_start,
+            self.runner_start,
+            end,
+            &mut file,
+        )
+        .context(format!("failed to write benchmark to {dst:?}"))?;
+
+        self.completed.complete();
+
+        Ok(())
     }
 }
 
-#[derive(Debug, Default)]
-pub struct BenchEventLog {
-    runner_id: String,
-    log: Vec<BenchEvent>,
+// Not using Drop, results in unnecessary copying (can't move out of self).
+pub struct EventGuard<'a> {
+    start: Instant,
+    runner: &'a mut BenchRunner,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl<'a> EventGuard<'a> {
+    pub fn finish(self, id: u64) {
+        self.runner.log.push(BenchEvent {
+            start: self.start,
+            end: self.runner.clock.now(),
+            id: id,
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct BenchEvent {
-    #[serde(rename = "_t")]
-    runner_elapsed_secs: f64,
-
-    #[serde(rename = "_e")]
-    event: BenchEventData,
-
-    #[serde(flatten)]
-    additional: HashMap<String, Value>,
+    pub start: Instant,
+    pub end: Instant,
+    pub id: u64,
 }
 
-#[derive(Debug, Serialize_repr, Deserialize_repr)]
-#[repr(u8)]
-pub enum BenchEventData {
-    RunnerStarted,
-    RunnerClosed,
-    ValueSent,
-    ValueReceived,
+fn write_all_bench_log(
+    log: Vec<BenchEvent>,
+    global_start: Instant,
+    runner_start: Instant,
+    runner_end: Instant,
+    writer: impl std::io::Write,
+) -> anyhow::Result<()> {
+    let mut writer = BufWriter::with_capacity(RUNNER_WRITER_BUFFER_SIZE, writer);
+    // file layout (little-endian):
+    // 8 bytes start_t_secs f64
+    // 8 bytes end_t_ms secs f64
+    // 8 bytes padding (for hex viewers)
+    //
+    // for each row:
+    //  8 bytes start_t_secs f64
+    //  8 bytes end_t_secs f64
+    //  8 bytes id u64
+
+    writer
+        .write(
+            &runner_start
+                .duration_since(global_start)
+                .as_secs_f64()
+                .to_le_bytes(),
+        )
+        .context("failed to write runner_start")?;
+
+    writer
+        .write(
+            &runner_end
+                .duration_since(global_start)
+                .as_secs_f64()
+                .to_le_bytes(),
+        )
+        .context("failed to write runner_end")?;
+
+    writer
+        .write(&0u64.to_le_bytes())
+        .context("failed to write padding bytes")?;
+
+    for row in log {
+        writer
+            .write(
+                &row.start
+                    .duration_since(global_start)
+                    .as_secs_f64()
+                    .to_le_bytes(),
+            )
+            .context("failed to write row_start")?;
+
+        writer
+            .write(
+                &row.end
+                    .duration_since(global_start)
+                    .as_secs_f64()
+                    .to_le_bytes(),
+            )
+            .context("failed to write row_end")?;
+
+        writer
+            .write(&row.id.to_le_bytes())
+            .context("failed to write row_id")?;
+    }
+
+    Ok(())
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.102"
 env_logger = "0.11.10"
 fast_time = "0.1.23"
 log = "0.4.32"
