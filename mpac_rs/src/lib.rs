@@ -13,6 +13,7 @@ where
     Self: Clone,
 {
     fn send(&self, data: T) -> Result<(), SendError<T>>;
+    fn len(&self) -> usize;
 }
 
 pub trait BlockingReceive<T>
@@ -20,6 +21,7 @@ where
     Self: Clone,
 {
     fn recv(&self) -> Result<T, RecvError>;
+    fn len(&self) -> usize;
 }
 
 #[cfg(feature = "bench")]

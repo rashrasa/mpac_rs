@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use fast_time::{Clock, Instant};
-use log::{debug, error};
+use log::{debug, error, info};
 use mpac_rs::{BlockingReceive, BlockingSend, ChannelMaker};
 
 use crate::runner::BenchRunner;
@@ -43,32 +43,39 @@ where
 
     let start_flag: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
 
-    // Scope to ensure values get dropped appropriately
-    {
-        let (tx, rx) = maker.channel();
+    let (tx, rx) = maker.channel();
 
-        for i in 0..config.n_senders {
-            let runner = runner.spawn_runner(format!("tx_runner_{}", i));
-            let tx = tx.clone();
-            let config = config.clone();
-            let start_flag = Arc::clone(&start_flag);
-            let s_h: thread::JoinHandle<()> = thread::spawn(move || {
-                sender_thread(start_flag, config.clone(), tx, runner, config.make_payload);
-            });
-            handles.push(s_h);
-        }
-
-        for i in 0..config.n_receivers {
-            let rx = rx.clone();
-            let runner = runner.spawn_runner(format!("rx_runner_{}", i));
-            let config = config.clone();
-            let start_flag = Arc::clone(&start_flag);
-            let r_h = thread::spawn(move || {
-                receiver_thread(start_flag, config.clone(), rx, runner);
-            });
-            handles.push(r_h);
-        }
+    for i in 0..config.n_senders {
+        let runner = runner.spawn_runner(format!("tx_runner_{}", i));
+        let tx = tx.clone();
+        let config = config.clone();
+        let start_flag = Arc::clone(&start_flag);
+        let s_h: thread::JoinHandle<()> = thread::spawn(move || {
+            sender_thread(start_flag, config.clone(), tx, runner, config.make_payload);
+        });
+        handles.push(s_h);
     }
+
+    for i in 0..config.n_receivers {
+        let rx = rx.clone();
+        let runner = runner.spawn_runner(format!("rx_runner_{}", i));
+        let config = config.clone();
+        let start_flag = Arc::clone(&start_flag);
+        let r_h = thread::spawn(move || {
+            receiver_thread(start_flag, config.clone(), rx, runner);
+        });
+        handles.push(r_h);
+    }
+
+    let len_fn: Box<dyn Fn() -> usize> = if config.sender_ttl_s.is_none() {
+        drop(tx);
+
+        Box::new(|| rx.len())
+    } else {
+        drop(rx);
+
+        Box::new(|| tx.len())
+    };
 
     {
         let (lock, cvar) = &*start_flag;
@@ -80,6 +87,15 @@ where
 
     for handle in handles {
         handle.join().unwrap();
+    }
+
+    let len = len_fn();
+
+    if len > 0 {
+        info!(
+            "benchmark ended with {} elements remaining in the queue",
+            len
+        );
     }
     Ok(())
 }

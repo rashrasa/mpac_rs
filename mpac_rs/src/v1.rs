@@ -48,8 +48,19 @@ impl<T> BlockingReceive<T> for Receiver<T> {
                     // Senders are still active but no messages are in the queue.
                 }
             }
-            std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    fn len(&self) -> usize {
+        let inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(err) => {
+                error!("Poison Error: {:?}", err);
+                err.into_inner()
+            }
+        };
+
+        inner.queue.len()
     }
 }
 
@@ -69,6 +80,18 @@ impl<T> BlockingSend<T> for Sender<T> {
             inner.queue.push(data);
             return Ok(());
         }
+    }
+
+    fn len(&self) -> usize {
+        let inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(err) => {
+                error!("Poison Error: {:?}", err);
+                err.into_inner()
+            }
+        };
+
+        inner.queue.len()
     }
 }
 
