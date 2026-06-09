@@ -77,11 +77,25 @@ impl LazyWindowedMetric {
         Ok(())
     }
 
-    pub fn generate(&self) -> Vec<Metric> {
+    pub fn generate(&self) -> anyhow::Result<Vec<Metric>> {
         let mut result = vec![];
         for bucket in &self.buckets {
-            let mut min = f64::MAX;
-            let mut max = f64::MIN;
+            if bucket.sorted_values.len() == 0 {
+                result.push(Metric {
+                    min: f64::NAN,
+                    max: f64::NAN,
+                    mean: f64::NAN,
+                    std_dev: f64::NAN,
+                    p50: f64::NAN,
+                    p90: f64::NAN,
+                    p95: f64::NAN,
+                    p99: f64::NAN,
+                    p999: f64::NAN,
+                });
+                continue;
+            }
+            let mut min = f64::INFINITY;
+            let mut max = -f64::INFINITY;
 
             let res = std_dev::standard_deviation(&bucket.sorted_values);
 
@@ -98,18 +112,19 @@ impl LazyWindowedMetric {
                 max,
                 mean,
                 std_dev,
-                p50: percentile(&bucket.sorted_values, 0.5),
-                p90: percentile(&bucket.sorted_values, 0.9),
-                p95: percentile(&bucket.sorted_values, 0.95),
-                p99: percentile(&bucket.sorted_values, 0.99),
-                p999: percentile(&bucket.sorted_values, 0.999),
+                p50: percentile(&bucket.sorted_values, 0.5).context("failed to calculate p50")?,
+                p90: percentile(&bucket.sorted_values, 0.9).context("failed to calculate p90")?,
+                p95: percentile(&bucket.sorted_values, 0.95).context("failed to calculate p95")?,
+                p99: percentile(&bucket.sorted_values, 0.99).context("failed to calculate p99")?,
+                p999: percentile(&bucket.sorted_values, 0.999)
+                    .context("failed to calculate p999")?,
             });
         }
-        result
+        Ok(result)
     }
 }
 
-fn percentile(sorted_values: &Vec<f64>, p: f64) -> f64 {
+fn percentile(sorted_values: &Vec<f64>, p: f64) -> anyhow::Result<f64> {
     assert!(
         p >= 0.0 && p <= 1.0,
         "percentile only accepts p in range [0.0, 1.0]"
@@ -121,8 +136,24 @@ fn percentile(sorted_values: &Vec<f64>, p: f64) -> f64 {
     let low = target.floor();
     let high = target.ceil();
     let weight = target - low;
+    let low_idx = low as usize;
 
-    sorted_values[low as usize] * weight + sorted_values[high as usize] * (1.0 - weight)
+    let low_val = sorted_values
+        .get(low_idx)
+        .ok_or(anyhow::Error::msg(format!(
+            "index {} out of bounds. length: {}",
+            low_idx, n
+        )))?;
+
+    let high_idx = (high as usize).min(n - 1);
+    let high_val = sorted_values
+        .get(high_idx)
+        .ok_or(anyhow::Error::msg(format!(
+            "index {} out of bounds. length: {}",
+            high_idx, n
+        )))?;
+
+    Ok(low_val * weight + high_val * (1.0 - weight))
 }
 
 pub enum ReconstructedEvent {
@@ -148,7 +179,7 @@ pub enum ReconstructedEvent {
 impl Aggregation {
     /// expects directory to include tx_runner_n and rx_runner_n files
     pub fn from_directory(run_path: &'static str) -> anyhow::Result<Aggregation> {
-        let aggregation_period_ms = 5_000.0;
+        let aggregation_period_ms = 250.0;
 
         let mut constructed_events: HashMap<u64, ReconstructedEvent> = HashMap::new();
 
@@ -249,20 +280,22 @@ impl Aggregation {
             }
         }
 
-        let start = *runner_starts
+        let start_ms = *runner_starts
             .iter()
             .min_by(|a, b| a.total_cmp(*b))
-            .expect("no min found");
-        let end = *runner_ends
+            .expect("no min found")
+            * 1000.0;
+        let end_ms = *runner_ends
             .iter()
             .max_by(|a, b| a.total_cmp(*b))
-            .expect("no max found");
+            .expect("no max found")
+            * 1000.0;
 
-        let mut lazy_send_delay = LazyWindowedMetric::new(aggregation_period_ms, start, end);
-        let mut lazy_recv_delay = LazyWindowedMetric::new(aggregation_period_ms, start, end);
-        let mut lazy_latency = LazyWindowedMetric::new(aggregation_period_ms, start, end);
+        let mut lazy_send_delay = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
+        let mut lazy_recv_delay = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
+        let mut lazy_latency = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
 
-        let mut lazy_throughput = LazyWindowedMetric::new(aggregation_period_ms, start, end);
+        let mut lazy_throughput = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
 
         for (id, event) in constructed_events {
             match event {
@@ -299,10 +332,18 @@ impl Aggregation {
         Ok(Aggregation {
             aggregation_period_s: aggregation_period_ms / 1000.0,
             n_windows: lazy_send_delay.n_buckets,
-            send_delay: lazy_send_delay.generate(),
-            recv_delay: lazy_recv_delay.generate(),
-            data_latency: lazy_latency.generate(),
-            throughput: lazy_throughput.generate(),
+            send_delay: lazy_send_delay
+                .generate()
+                .context("failed to generate aggregation for send delay metric")?,
+            recv_delay: lazy_recv_delay
+                .generate()
+                .context("failed to generate aggregation for recv delay metric")?,
+            data_latency: lazy_latency
+                .generate()
+                .context("failed to generate aggregation for latency metric")?,
+            throughput: lazy_throughput
+                .generate()
+                .context("failed to generate aggregation for throughput metric")?,
         })
     }
 }
