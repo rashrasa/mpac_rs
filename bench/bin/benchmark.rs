@@ -7,9 +7,8 @@ use anyhow::Context;
 use fast_time::Clock;
 
 use bench::{
-    aggregate::Aggregation,
-    bench::bench_1::{self, run_bench_1},
     runner::MainBenchRunner,
+    test::test_1::{self, run_bench_1},
 };
 use log::{error, info};
 
@@ -50,7 +49,7 @@ fn main() -> anyhow::Result<()> {
         Box::new(mpac_rs::v1::V1Maker),
         vec![(
             "3_3_10_10_4",
-            bench_1::Config {
+            test_1::Config {
                 n_senders: 3,
                 n_receivers: 3,
                 sender_ttl_s: Some(10.0),
@@ -60,16 +59,6 @@ fn main() -> anyhow::Result<()> {
         )],
     )];
 
-    let agg =
-        Aggregation::from_directory("./results/main_runner/version_v1_naive/config_3_3_10_10_4")
-            .context("could not run aggregation")?;
-
-    let mut file = BufWriter::new(File::create("aggregation.txt").context("could not open file")?);
-
-    file.write_all(&format!("{}", agg).into_bytes())?;
-
-    // TODO: Use command-line arguments to choose whether to aggregate or benchmark
-    return Ok(());
     info!("Starting benchmark");
     let mut clock = Clock::new();
     let start = clock.now();

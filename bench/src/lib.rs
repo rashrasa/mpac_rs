@@ -3,9 +3,9 @@
 
 // TODO: potentially instantiate logs with an extremely high capacity
 pub mod aggregate;
-pub mod bench;
 pub mod completion;
 pub mod runner;
+pub mod test;
 
 const RUNNER_WRITER_BUFFER_SIZE: usize = 64 * 1024;
 
