@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Context;
 use fast_time::Clock;
 
@@ -42,23 +44,45 @@ fn main() -> anyhow::Result<()> {
     let makers = vec![(
         "v1_naive",
         Box::new(mpac_rs::v1::V1Maker),
-        vec![(
-            "3_3_10_10_4",
-            test_1::Config {
-                n_senders: 3,
-                n_receivers: 3,
-                sender_ttl_s: Some(10.0),
-                receiver_ttl_s: Some(10.0),
-                make_payload: || 9u32,
-            },
-        )],
+        vec![
+            (
+                "3_3_10_10_4",
+                test_1::Config {
+                    n_senders: 3,
+                    n_receivers: 3,
+                    sender_ttl_s: Some(10.0),
+                    receiver_ttl_s: Some(10.0),
+                    make_payload: || 9u32,
+                },
+            ),
+            (
+                "1_3_10_10_4",
+                test_1::Config {
+                    n_senders: 1,
+                    n_receivers: 3,
+                    sender_ttl_s: Some(10.0),
+                    receiver_ttl_s: Some(10.0),
+                    make_payload: || 9u32,
+                },
+            ),
+            (
+                "3_1_10_10_4",
+                test_1::Config {
+                    n_senders: 3,
+                    n_receivers: 1,
+                    sender_ttl_s: Some(10.0),
+                    receiver_ttl_s: Some(10.0),
+                    make_payload: || 9u32,
+                },
+            ),
+        ],
     )];
 
     info!("Starting benchmark");
     let mut clock = Clock::new();
     let start = clock.now();
 
-    let runner = MainBenchRunner::new();
+    let runner = MainBenchRunner::new(Path::new("output/result").to_path_buf());
 
     for (version_desc, version, configs) in makers {
         let runner = runner.spawn_runner(format!("version_{}", version_desc));

@@ -8,6 +8,7 @@ use std::{
     fmt::Display,
     fs::{File, read_dir},
     io::{BufReader, ErrorKind::UnexpectedEof, Read},
+    path::Path,
 };
 
 use anyhow::Context;
@@ -55,7 +56,7 @@ pub enum ReconstructedEvent {
 
 impl Aggregation {
     /// expects directory to include tx_runner_n and rx_runner_n files
-    pub fn from_directory(run_path: &'static str) -> anyhow::Result<Aggregation> {
+    pub fn from_directory(run_path: impl AsRef<Path>) -> anyhow::Result<Aggregation> {
         let aggregation_period_s = 0.25;
 
         let mut constructed_events: HashMap<u64, ReconstructedEvent> = HashMap::new();
@@ -97,8 +98,8 @@ impl Aggregation {
                                             id: *id,
                                             start_tx_s: event_start,
                                             end_tx_s: event_end,
-                                            start_rx_s: *end_rx_s,
-                                            end_rx_s: *start_rx_s,
+                                            start_rx_s: *start_rx_s,
+                                            end_rx_s: *end_rx_s,
                                         }
                                     } else {
                                         return Err(anyhow::Error::msg(format!(

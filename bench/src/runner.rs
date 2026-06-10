@@ -1,7 +1,7 @@
 use std::{
     fs::{File, create_dir_all},
     io::{BufWriter, Write},
-    path::Path,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,7 +20,7 @@ pub struct MainBenchRunner {
 }
 
 impl MainBenchRunner {
-    pub fn new() -> Self {
+    pub fn new(result_root_path: PathBuf) -> Self {
         let mut clock = Clock::new();
 
         let start = clock.now();
@@ -33,6 +33,8 @@ impl MainBenchRunner {
                 id: String::from("main_runner"),
                 runner_start: start,
                 log: vec![],
+
+                save_to_root: result_root_path,
 
                 completed: CompletionGuard::new("main_runner".into()),
             },
@@ -60,6 +62,8 @@ pub struct BenchRunner {
     runner_start: Instant,
     log: Vec<BenchEvent>,
 
+    save_to_root: PathBuf,
+
     completed: CompletionGuard,
 }
 
@@ -76,6 +80,8 @@ impl BenchRunner {
             id: id.clone(),
             runner_start: start,
             log: vec![],
+
+            save_to_root: self.save_to_root.clone(),
 
             completed: CompletionGuard::new(id),
         }
@@ -103,7 +109,7 @@ impl BenchRunner {
     pub fn complete_runner(mut self) -> anyhow::Result<()> {
         let end = self.clock.now();
 
-        let mut dst = Path::new("results").to_path_buf();
+        let mut dst = self.save_to_root;
         let splits = self.id.split("::");
         let mut last = "";
         for split in splits {

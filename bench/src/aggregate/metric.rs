@@ -59,6 +59,8 @@ pub enum DistributionMetric {
         p95: f64,
         p99: f64,
         p999: f64,
+        p9999: f64,
+        p99999: f64,
     },
 }
 
@@ -180,6 +182,10 @@ impl LazyWindowedMetric {
                 p99: percentile(&bucket.sorted_values, 0.99).context("failed to calculate p99")?,
                 p999: percentile(&bucket.sorted_values, 0.999)
                     .context("failed to calculate p999")?,
+                p9999: percentile(&bucket.sorted_values, 0.9999)
+                    .context("failed to calculate p9999")?,
+                p99999: percentile(&bucket.sorted_values, 0.99999)
+                    .context("failed to calculate p99999")?,
             });
         }
         Ok(result)
@@ -237,6 +243,8 @@ impl std::fmt::Display for DistributionMetric {
                 p95,
                 p99,
                 p999,
+                p9999,
+                p99999,
             } => {
                 let mut formatted = format!("Number of Events:\t{}\n", *count);
                 formatted = format!("{formatted}Time Range:\n\t{} --> {}\n", *start, *end);
@@ -251,6 +259,8 @@ impl std::fmt::Display for DistributionMetric {
                 formatted = format!("{formatted}\tp95, {:.8}\n", *p95);
                 formatted = format!("{formatted}\tp99, {:.8}\n", *p99);
                 formatted = format!("{formatted}\tp999, {:.8}\n", *p999);
+                formatted = format!("{formatted}\tp9999, {:.8}\n", *p9999);
+                formatted = format!("{formatted}\tp99999, {:.8}\n", *p99999);
 
                 write!(f, "{}", formatted)
             }
@@ -374,6 +384,8 @@ mod tests {
                 p95,
                 p99,
                 p999,
+                p9999,
+                p99999,
             } => {
                 assert_eq!(4, *count);
                 assert_relative_eq!(0.0, *start, epsilon = F64_ACCEPTABLE_ERROR);
@@ -390,6 +402,8 @@ mod tests {
                 assert_relative_eq!(8.85, *p95, epsilon = F64_ACCEPTABLE_ERROR);
                 assert_relative_eq!(8.97, *p99, epsilon = F64_ACCEPTABLE_ERROR);
                 assert_relative_eq!(8.997, *p999, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.9997, *p9999, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.99997, *p99999, epsilon = F64_ACCEPTABLE_ERROR);
             }
         }
     }
