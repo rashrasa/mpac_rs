@@ -11,21 +11,26 @@ use std::{
 };
 
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 
 use crate::aggregate::{
     ReconstructedEvent::{PartialReceiverEvent, PartialSenderEvent},
-    metric::{LazyWindowedMetric, Metric},
+    metric::{DistributionMetric, GaugeMetric, LazyWindowedMetric},
 };
 
+#[derive(Serialize, Deserialize)]
 pub struct Aggregation {
+    pub start: f64,
+    pub end: f64,
+
     pub aggregation_period_s: f64,
     pub n_windows: usize,
-    pub send_delay: Vec<Metric>,
-    pub recv_delay: Vec<Metric>,
+    pub send_delay: Vec<DistributionMetric>,
+    pub recv_delay: Vec<DistributionMetric>,
 
-    pub data_latency: Vec<Metric>,
+    pub data_latency: Vec<DistributionMetric>,
 
-    pub throughput: Vec<Metric>,
+    pub throughput: Vec<GaugeMetric>,
 }
 
 pub enum ReconstructedEvent {
@@ -51,7 +56,7 @@ pub enum ReconstructedEvent {
 impl Aggregation {
     /// expects directory to include tx_runner_n and rx_runner_n files
     pub fn from_directory(run_path: &'static str) -> anyhow::Result<Aggregation> {
-        let aggregation_period_ms = 2500.0;
+        let aggregation_period_s = 0.25;
 
         let mut constructed_events: HashMap<u64, ReconstructedEvent> = HashMap::new();
 
@@ -152,41 +157,39 @@ impl Aggregation {
             }
         }
 
-        let start_ms = *runner_starts
+        let start_s = *runner_starts
             .iter()
             .min_by(|a, b| a.total_cmp(*b))
-            .expect("no min found")
-            * 1000.0;
-        let end_ms = *runner_ends
+            .expect("no min found");
+        let end_s = *runner_ends
             .iter()
             .max_by(|a, b| a.total_cmp(*b))
-            .expect("no max found")
-            * 1000.0;
+            .expect("no max found");
 
-        let mut lazy_send_delay = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
-        let mut lazy_recv_delay = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
-        let mut lazy_latency = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
+        let mut lazy_send_delay = LazyWindowedMetric::new(aggregation_period_s, start_s, end_s);
+        let mut lazy_recv_delay = LazyWindowedMetric::new(aggregation_period_s, start_s, end_s);
+        let mut lazy_latency = LazyWindowedMetric::new(aggregation_period_s, start_s, end_s);
 
-        let mut lazy_throughput = LazyWindowedMetric::new(aggregation_period_ms, start_ms, end_ms);
+        let mut lazy_throughput = LazyWindowedMetric::new(aggregation_period_s, start_s, end_s);
 
-        for (id, event) in constructed_events {
+        for (_, event) in constructed_events {
             match event {
                 PartialSenderEvent {
-                    id,
+                    id: _,
                     start_tx_s,
                     end_tx_s,
                 } => {
                     lazy_send_delay.add(end_tx_s - start_tx_s, start_tx_s)?;
                 }
                 PartialReceiverEvent {
-                    id,
+                    id: _,
                     start_rx_s,
                     end_rx_s,
                 } => {
                     lazy_recv_delay.add(end_rx_s - start_rx_s, start_rx_s)?;
                 }
                 ReconstructedEvent::ReconstructedEvent {
-                    id,
+                    id: _,
                     start_tx_s,
                     end_tx_s,
                     start_rx_s,
@@ -202,7 +205,10 @@ impl Aggregation {
         }
 
         Ok(Aggregation {
-            aggregation_period_s: aggregation_period_ms / 1000.0,
+            start: start_s,
+            end: end_s,
+
+            aggregation_period_s,
             n_windows: lazy_send_delay.n_buckets(),
             send_delay: lazy_send_delay
                 .generate()
@@ -214,7 +220,7 @@ impl Aggregation {
                 .generate()
                 .context("failed to generate aggregation for latency metric")?,
             throughput: lazy_throughput
-                .generate()
+                .generate_gauged()
                 .context("failed to generate aggregation for throughput metric")?,
         })
     }
@@ -235,24 +241,6 @@ impl Display for Aggregation {
             formatted = format!("{formatted}Latency:\n{}\n", self.data_latency[window]);
             formatted = format!("{formatted}Throughput:\n{}\n", self.throughput[window]);
         }
-
-        write!(f, "{}", formatted)
-    }
-}
-
-impl Display for Metric {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut formatted = format!(
-            "Mean:\n\t{:.8}\nStandard Deviation:\n\t{:.8}\nRange\n\t{:.8} --> {:.8}\n",
-            self.mean, self.std_dev, self.min, self.max
-        );
-
-        formatted = format!("{formatted}Percentiles:\n");
-        formatted = format!("{formatted}\tp50, {:.8}\n", self.p50);
-        formatted = format!("{formatted}\tp90, {:.8}\n", self.p90);
-        formatted = format!("{formatted}\tp95, {:.8}\n", self.p95);
-        formatted = format!("{formatted}\tp99, {:.8}\n", self.p99);
-        formatted = format!("{formatted}\tp999, {:.8}\n", self.p999);
 
         write!(f, "{}", formatted)
     }

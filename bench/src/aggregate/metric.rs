@@ -1,4 +1,5 @@
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 
 /// Calculates the `p*100`-th percentile of `sorted_values`.
 ///
@@ -39,18 +40,40 @@ pub fn percentile(sorted_values: &[f64], p: f64) -> anyhow::Result<f64> {
     Ok(low_val * (1.0 - weight) + high_val * (weight))
 }
 
-pub struct Metric {
-    pub count: usize,
+#[derive(Serialize, Deserialize)]
+pub enum DistributionMetric {
+    NoEvents {
+        start: f64,
+        end: f64,
+    },
+    Distribution {
+        start: f64,
+        end: f64,
+        count: usize,
+        min: f64,
+        max: f64,
+        mean: f64,
+        std_dev: f64,
+        p50: f64,
+        p90: f64,
+        p95: f64,
+        p99: f64,
+        p999: f64,
+    },
+}
 
-    pub min: f64,
-    pub max: f64,
-    pub mean: f64,
-    pub std_dev: f64,
-    pub p50: f64,
-    pub p90: f64,
-    pub p95: f64,
-    pub p99: f64,
-    pub p999: f64,
+#[derive(Serialize, Deserialize)]
+pub enum GaugeMetric {
+    NoEvents {
+        start: f64,
+        end: f64,
+    },
+    Gauge {
+        start: f64,
+        end: f64,
+        count: usize,
+        value: f64,
+    },
 }
 
 pub struct LazyWindowedMetric {
@@ -71,19 +94,25 @@ pub struct LazyWindowedMetricBucket {
 impl LazyWindowedMetric {
     pub fn new(period: f64, start: f64, end: f64) -> Self {
         let n = ((end - start) / period).ceil() as usize;
+
+        let mut buckets = Vec::with_capacity(n);
+        let mut t = start;
+
+        for _ in 0..n {
+            buckets.push(LazyWindowedMetricBucket {
+                start: t,
+                end: t + period,
+                sorted_values: vec![],
+            });
+            t += period;
+        }
+
         Self {
             period,
             n_buckets: n,
             start,
             end,
-            buckets: vec![
-                LazyWindowedMetricBucket {
-                    start: start,
-                    end: end,
-                    sorted_values: vec![]
-                };
-                n
-            ],
+            buckets,
         }
     }
 
@@ -112,22 +141,13 @@ impl LazyWindowedMetric {
         Ok(())
     }
 
-    pub fn generate(&self) -> anyhow::Result<Vec<Metric>> {
+    pub fn generate(&self) -> anyhow::Result<Vec<DistributionMetric>> {
         let mut result = vec![];
         for bucket in &self.buckets {
             if bucket.sorted_values.len() == 0 {
-                result.push(Metric {
-                    count: 0,
-
-                    min: f64::NAN,
-                    max: f64::NAN,
-                    mean: f64::NAN,
-                    std_dev: f64::NAN,
-                    p50: f64::NAN,
-                    p90: f64::NAN,
-                    p95: f64::NAN,
-                    p99: f64::NAN,
-                    p999: f64::NAN,
+                result.push(DistributionMetric::NoEvents {
+                    start: bucket.start,
+                    end: bucket.end,
                 });
                 continue;
             }
@@ -144,7 +164,10 @@ impl LazyWindowedMetric {
                 max = max.max(*v);
             }
 
-            result.push(Metric {
+            result.push(DistributionMetric::Distribution {
+                start: bucket.start,
+                end: bucket.end,
+
                 count: bucket.sorted_values.len(),
 
                 min,
@@ -162,8 +185,99 @@ impl LazyWindowedMetric {
         Ok(result)
     }
 
+    pub fn generate_gauged(&self) -> anyhow::Result<Vec<GaugeMetric>> {
+        let mut result = vec![];
+        for bucket in &self.buckets {
+            if bucket.sorted_values.len() == 0 {
+                result.push(GaugeMetric::NoEvents {
+                    start: bucket.start,
+                    end: bucket.end,
+                });
+                continue;
+            }
+            let mut value = 0.0;
+            for v in bucket.sorted_values.iter() {
+                value += v;
+            }
+
+            result.push(GaugeMetric::Gauge {
+                start: bucket.start,
+                end: bucket.end,
+
+                count: bucket.sorted_values.len(),
+
+                value: value / self.period,
+            });
+        }
+        Ok(result)
+    }
+
     pub fn n_buckets(&self) -> usize {
         self.n_buckets
+    }
+}
+
+impl std::fmt::Display for DistributionMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DistributionMetric::NoEvents { start, end } => {
+                write!(f, "No Events Recorded in [{}, {})", start, end)
+            }
+            DistributionMetric::Distribution {
+                start,
+                end,
+
+                count,
+                min,
+                max,
+                mean,
+                std_dev,
+                p50,
+                p90,
+                p95,
+                p99,
+                p999,
+            } => {
+                let mut formatted = format!("Number of Events:\t{}\n", *count);
+                formatted = format!("{formatted}Time Range:\n\t{} --> {}\n", *start, *end);
+
+                formatted = format!("{formatted}Mean:\t{:.8}\n", *mean);
+                formatted = format!("{formatted}Standard Deviation:\t{:.8}\n", *std_dev);
+                formatted = format!("{formatted}Range\n\t{:.8} --> {:.8}\n", *min, *max);
+
+                formatted = format!("{formatted}Percentiles:\n");
+                formatted = format!("{formatted}\tp50, {:.8}\n", *p50);
+                formatted = format!("{formatted}\tp90, {:.8}\n", *p90);
+                formatted = format!("{formatted}\tp95, {:.8}\n", *p95);
+                formatted = format!("{formatted}\tp99, {:.8}\n", *p99);
+                formatted = format!("{formatted}\tp999, {:.8}\n", *p999);
+
+                write!(f, "{}", formatted)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for GaugeMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GaugeMetric::NoEvents { start, end } => {
+                write!(f, "No Events Recorded in [{}, {})", start, end)
+            }
+            GaugeMetric::Gauge {
+                start,
+                end,
+                count,
+                value,
+            } => {
+                let mut formatted = format!("Number of Events:\t{}\n", *count);
+                formatted = format!("{formatted}Time Range:\n\t{} --> {}\n", *start, *end);
+
+                formatted = format!("{formatted}Value:\t{:.8}\n", *value);
+
+                write!(f, "{}", formatted)
+            }
+        }
     }
 }
 
@@ -245,12 +359,38 @@ mod tests {
 
         let result = &metric.generate().unwrap()[0];
 
-        assert_eq!(4, result.count);
-        assert_relative_eq!(5.5, result.mean, epsilon = F64_ACCEPTABLE_ERROR);
-        assert_relative_eq!(6.0, result.p50, epsilon = F64_ACCEPTABLE_ERROR);
-        assert_relative_eq!(8.7, result.p90, epsilon = F64_ACCEPTABLE_ERROR);
-        assert_relative_eq!(8.85, result.p95, epsilon = F64_ACCEPTABLE_ERROR);
-        assert_relative_eq!(8.97, result.p99, epsilon = F64_ACCEPTABLE_ERROR);
-        assert_relative_eq!(8.997, result.p999, epsilon = F64_ACCEPTABLE_ERROR);
+        match result {
+            DistributionMetric::NoEvents { .. } => panic!("no events in this bucket"),
+            DistributionMetric::Distribution {
+                start,
+                end,
+                count,
+                min,
+                max,
+                mean,
+                std_dev,
+                p50,
+                p90,
+                p95,
+                p99,
+                p999,
+            } => {
+                assert_eq!(4, *count);
+                assert_relative_eq!(0.0, *start, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(250.0, *end, epsilon = F64_ACCEPTABLE_ERROR);
+
+                assert_relative_eq!(1.0, *min, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(9.0, *max, epsilon = F64_ACCEPTABLE_ERROR);
+
+                assert_relative_eq!(5.5, *mean, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(3.696_845_502_136, *std_dev, epsilon = F64_ACCEPTABLE_ERROR);
+
+                assert_relative_eq!(6.0, *p50, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.7, *p90, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.85, *p95, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.97, *p99, epsilon = F64_ACCEPTABLE_ERROR);
+                assert_relative_eq!(8.997, *p999, epsilon = F64_ACCEPTABLE_ERROR);
+            }
+        }
     }
 }
