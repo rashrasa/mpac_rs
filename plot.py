@@ -74,7 +74,7 @@ for config, series in grouped.items():
             x=times,
             y=values,
             mode="lines",
-            name=f"throughput"
+            name=f"estimated throughput rate"
         ), row=i+1, col=1, secondary_y=False)
 
         fig.add_trace(go.Bar(
@@ -86,7 +86,7 @@ for config, series in grouped.items():
 
     
     fig.update_layout(
-        title=f"Throughput vs Time, {config}",
+        title=f"Estimated Throughput Rate vs Time, {config}",
         hovermode="x unified",
         height=500 * len(series),
     )
