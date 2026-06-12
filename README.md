@@ -1,6 +1,6 @@
 # Multi-Producer, Any-Consumer Channel
 
-Multiple implementations of a concurrent queue using a channel-like API. Multiple producers can push data to multiple consumers, with only one of them receiving any specific value.
+An MPMC unbounded concurrent queue accessed through a channel-like API. Has multiple implementations of the queue testing different implemenation techniques.
 
 ## Run
 
@@ -17,7 +17,6 @@ open `output/plots/*.html` to view plots
 Implemented as a `Vec`, with sender/receiver count management through `Drop` and `Clone`, safe access through a single `Mutex` and shared with `Arc`. Receivers busy-wait (with `sleep`) until there is an item in the queue, or the queue is empty and the sender count is 0. Senders add to the queue if the receiver count is >0.
 
 ### Version 2
-
 
 Same as version 1, but uses a VecDeque. Basic optimization but results in significantly a significantly better channel.
 

@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context;
 use fast_time::{Clock, Instant};
 use log::{debug, error};
-use mpac_rs::{BlockingReceive, BlockingSend, ChannelMaker};
+use mpac_rs::{BBlockingReceive, BBlockingSend, ChannelMaker};
 
 use crate::runner::BenchRunner;
 
@@ -82,7 +82,7 @@ where
 fn sender_thread<T>(
     start_flag: Arc<Barrier>,
     config: Config<T>,
-    mut tx: impl BlockingSend<Message<T>>,
+    mut tx: impl BBlockingSend<Message<T>>,
     mut runner: BenchRunner,
     make_payload: fn() -> T,
 ) {
@@ -115,7 +115,7 @@ fn sender_thread<T>(
 }
 
 fn sender_work<T>(
-    tx: &mut impl BlockingSend<Message<T>>,
+    tx: &mut impl BBlockingSend<Message<T>>,
     runner: &mut BenchRunner,
     make_playload: fn() -> T,
 ) -> anyhow::Result<()> {
@@ -147,7 +147,7 @@ fn keep_sender_alive(ttl: &Option<f64>, start: &Instant, clock: &mut Clock) -> b
 fn receiver_thread<T>(
     start_flag: Arc<Barrier>,
     config: Config<T>,
-    mut rx: impl BlockingReceive<Message<T>>,
+    mut rx: impl BBlockingReceive<Message<T>>,
     mut runner: BenchRunner,
 ) {
     let mut clock = runner.clock();
@@ -179,7 +179,7 @@ fn receiver_thread<T>(
 }
 
 fn receiver_work<T>(
-    rx: &mut impl BlockingReceive<Message<T>>,
+    rx: &mut impl BBlockingReceive<Message<T>>,
     runner: &mut BenchRunner,
 ) -> anyhow::Result<()> {
     let event_guard = runner.start_event();

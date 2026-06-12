@@ -8,7 +8,7 @@ use bench::{
     test::test_1::{self, run_bench_1},
 };
 use log::{error, info};
-use mpac_rs::{V2Maker, v1::V1Maker};
+use mpac_rs::{v1::V1Maker, v2::V2Maker};
 
 enum Version {
     V1(&'static str),
@@ -47,38 +47,38 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     // version names: tx_rx_sttl_rttl_size
-    let configs = vec![vec![
+    let configs = vec![
         (
-            "3_3_10_10_4",
+            "3_3_5_5_4",
             test_1::Config {
                 n_senders: 3,
                 n_receivers: 3,
-                sender_ttl_s: Some(10.0),
-                receiver_ttl_s: Some(10.0),
+                sender_ttl_s: Some(5.0),
+                receiver_ttl_s: Some(5.0),
                 make_payload: || 9u32,
             },
         ),
         (
-            "1_3_10_10_4",
+            "1_3_5_5_4",
             test_1::Config {
                 n_senders: 1,
                 n_receivers: 3,
-                sender_ttl_s: Some(10.0),
-                receiver_ttl_s: Some(10.0),
+                sender_ttl_s: Some(5.0),
+                receiver_ttl_s: Some(5.0),
                 make_payload: || 9u32,
             },
         ),
         (
-            "3_1_10_10_4",
+            "3_1_5_5_4",
             test_1::Config {
                 n_senders: 3,
                 n_receivers: 1,
-                sender_ttl_s: Some(10.0),
-                receiver_ttl_s: Some(10.0),
+                sender_ttl_s: Some(5.0),
+                receiver_ttl_s: Some(5.0),
                 make_payload: || 9u32,
             },
         ),
-    ]];
+    ];
 
     let version_descs = vec![Version::V1("v1_naive"), Version::V2("v2_vec_deque")];
 
@@ -93,28 +93,26 @@ fn main() -> anyhow::Result<()> {
             Version::V1(d) => d,
             Version::V2(d) => d,
         };
-        for configs in &configs {
-            let runner = runner.spawn_runner(format!("version_{}", version_desc));
-            for (config_desc, config) in configs {
-                info!(
-                    "Starting {} tests with profile {}",
-                    version_desc, config_desc
-                );
-                let runner = runner.spawn_runner(format!("config_{}", config_desc));
-                match v {
-                    Version::V1(_) => run_bench_1(&runner, &V1Maker, config.clone())
-                        .context("failed to run benchmark 1")?,
-                    Version::V2(_) => run_bench_1(&runner, &V2Maker, config.clone())
-                        .context("failed to run benchmark 1")?,
-                }
-
-                if let Err(err) = runner.complete_runner() {
-                    error!("{:?}", err);
-                }
+        let runner = runner.spawn_runner(format!("version_{}", version_desc));
+        for (config_desc, config) in &configs {
+            info!(
+                "Starting {} tests with profile {}",
+                version_desc, config_desc
+            );
+            let runner = runner.spawn_runner(format!("config_{}", config_desc));
+            match v {
+                Version::V1(_) => run_bench_1(&runner, &V1Maker, config.clone())
+                    .context("failed to run benchmark 1")?,
+                Version::V2(_) => run_bench_1(&runner, &V2Maker, config.clone())
+                    .context("failed to run benchmark 1")?,
             }
+
             if let Err(err) = runner.complete_runner() {
                 error!("{:?}", err);
             }
+        }
+        if let Err(err) = runner.complete_runner() {
+            error!("{:?}", err);
         }
     }
 

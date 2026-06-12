@@ -50,8 +50,10 @@ impl<T> BlockingReceive<T> for Receiver<T> {
             }
         }
     }
+}
 
-    #[cfg(feature = "bench")]
+#[cfg(feature = "bench")]
+impl<T: Send> crate::BBlockingReceive<T> for Receiver<T> {
     fn b_recv(&self) -> Result<(T, usize), crate::BRecvError> {
         loop {
             {
@@ -94,8 +96,10 @@ impl<T: Send> BlockingSend<T> for Sender<T> {
             return Ok(());
         }
     }
+}
 
-    #[cfg(feature = "bench")]
+#[cfg(feature = "bench")]
+impl<T: Send> crate::BBlockingSend<T> for Sender<T> {
     fn b_send(&self, data: T) -> Result<usize, crate::BSendError<T>> {
         let mut inner = match self.inner.lock() {
             Ok(guard) => guard,
@@ -173,8 +177,8 @@ impl crate::ChannelMaker for V2Maker {
     fn channel<T>(
         &self,
     ) -> (
-        impl BlockingSend<T> + Send + 'static,
-        impl BlockingReceive<T> + Send + 'static,
+        impl crate::BBlockingSend<T> + Send + 'static,
+        impl crate::BBlockingReceive<T> + Send + 'static,
     )
     where
         T: Send + 'static,
