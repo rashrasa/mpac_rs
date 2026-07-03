@@ -1,5 +1,7 @@
 # Multi-Producer, Multi-Consumer Channel
 
+*Check releases for all plots*
+
 An MPMC unbounded concurrent queue, a custom benchmark engine, and an optimized event aggregator.
 
 Used `Miri` to flag unsoundness and undefined behavior when using `unsafe`.
@@ -176,3 +178,7 @@ Everything was tested and run with:
 - Exclude any argument to run only specified stages
 
 Plots: `output/plots/*.html` or `output/plots/*.jpg`
+
+## AI Usage
+
+The python code for plotting was AI-assisted.
