@@ -43,6 +43,6 @@ if $plot; then
     pip install -r requirements.txt -q
 
     echo plotting
-    python3 plot.py
+    python3 plot.py images
     deactivate
 fi

@@ -232,6 +232,7 @@ unsafe fn run_work(config_entry: DirEntry, version_name: String) -> anyhow::Resu
                     "{}.bin",
                     config_path
                         .clone()
+                        .into_os_string()
                         .into_string()
                         .map_err(|_| anyhow::Error::msg(format!(
                             "could not transform {:?} into string",

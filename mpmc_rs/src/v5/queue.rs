@@ -128,11 +128,14 @@ impl<T> AtomicQueueHandle<T> {
             let mut guard = inner.buf[end].inner.lock();
 
             if guard.is_some() {
-                drop(guard);
-                drop(inner);
                 // Queue detected full at this instant.
                 // Wait for resize and retry.
+
+                drop(guard);
+                drop(inner);
                 self.request_resize_block();
+
+                // we can now retry the operation
                 continue;
             }
 
