@@ -117,7 +117,7 @@ Collects raw data from the Benchmark and produces useful aggregations such as th
 
 Time down to `305.34s`
 
-- Lazily evaluating error string in `LazyWindowedMetric::add` on Option value (using `ok_or_else` instead of `ok_or`) in hot loop
+- Lazily evaluating error string in `LazyWindowedMetric::add` on Option value (using `ok_or_else` instead of `ok_or`) which saved a String allocation in a hot loop
 
 #### Speedup 2: Sorting at the End Instead of Inserting in Sorted Order
 
