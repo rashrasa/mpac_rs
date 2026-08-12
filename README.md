@@ -169,7 +169,7 @@ Time down to `8.98s`
 
 Everything was tested and run with:
 
-- Rust v1.98.0
+- Rust v1.96.0
 - Python v3.14.5 (regular version, not the free-threaded/GIL-disabled version)
 - Google Chrome (needed by kaleido to create images of the plots)
 
